@@ -4,13 +4,11 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
-
-env:
-  AWS_REGION: ${{ secrets.AWS_REGION != '' && secrets.AWS_REGION || 'us-east-1' }}
 
 jobs:
   deploy:
@@ -22,46 +20,50 @@ jobs:
         with:
           node-version: 20
 
+      - name: Guard required secrets
+        env:
+          AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          set -e
+          for v in AWS_ROLE_TO_ASSUME AWS_REGION; do
+            [ -n "${!v}" ] || { echo "::error::missing secret $v"; exit 1; }
+          done
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
       - name: whoami
         run: aws sts get-caller-identity
 
-      - name: Install root deps
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          fi
-
-      - name: Determine CDK directory
-        run: |
-          if [ -d infra/cdk ]; then
-            echo "CDK_DIR=infra/cdk" >> "$GITHUB_ENV"
-          elif [ -d infra ]; then
-            echo "CDK_DIR=infra" >> "$GITHUB_ENV"
-          else
-            echo "::error::No infra or infra/cdk directory found"
-            exit 1
-          fi
-
       - name: Install CDK deps
-        working-directory: ${{ env.CDK_DIR }}
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          fi
+          set -e
+          if [ -f package-lock.json ]; then npm ci; fi
+          if [ -d infra ]; then cd infra && npm ci && cd - >/dev/null; fi
 
       - name: CDK synth
-        working-directory: ${{ env.CDK_DIR }}
-        run: npx cdk synth
+        run: |
+          set -e
+          CDK_DIR="."
+          [ -d infra ] && CDK_DIR="infra"
+          cd "$CDK_DIR"
+          npx cdk synth
 
       - name: CDK bootstrap (idempotent)
-        working-directory: ${{ env.CDK_DIR }}
-        run: npx cdk bootstrap || true
+        run: |
+          set -e
+          CDK_DIR="."
+          [ -d infra ] && CDK_DIR="infra"
+          cd "$CDK_DIR"
+          npx cdk bootstrap || true
 
       - name: CDK deploy
-        working-directory: ${{ env.CDK_DIR }}
-        run: npx cdk deploy --require-approval never
+        run: |
+          set -e
+          CDK_DIR="."
+          [ -d infra ] && CDK_DIR="infra"
+          cd "$CDK_DIR"
+          npx cdk deploy --require-approval never

@@ -4,13 +4,14 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION != '' && secrets.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
   S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
   DISTRIBUTION_ID: ${{ secrets.DISTRIBUTION_ID }}
   VITE_API_URL: ${{ secrets.VITE_API_URL }}
@@ -25,55 +26,79 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
 
-      - name: Guard required envs
+      - name: Guard required secrets
+        env:
+          AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+          DISTRIBUTION_ID: ${{ secrets.DISTRIBUTION_ID }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
         run: |
-          for v in S3_BUCKET_NAME DISTRIBUTION_ID VITE_API_URL; do
-            if [ -z "${!v}" ]; then
-              echo "::error::missing $v"
-              exit 1
-            fi
+          set -e
+          for v in AWS_ROLE_TO_ASSUME AWS_REGION S3_BUCKET_NAME DISTRIBUTION_ID VITE_API_URL; do
+            [ -n "${!v}" ] || { echo "::error::missing secret $v"; exit 1; }
           done
 
+      - name: Detect frontend dir
+        id: detect
+        run: |
+          set -e
+          if [ -f package.json ] && jq -e '.scripts.build' package.json >/dev/null 2>&1; then
+            echo "dir=." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -f frontend/package.json ] && jq -e '.scripts.build' frontend/package.json >/dev/null 2>&1; then
+            echo "dir=frontend" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::error::frontend package.json not found"
+          exit 1
+
       - name: Install
-        working-directory: frontend
-        run: npm ci
+        run: |
+          set -e
+          npm ci
+        working-directory: ${{ steps.detect.outputs.dir }}
 
       - name: Build
-        working-directory: frontend
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
-        run: npm run build
+        run: |
+          set -e
+          npm run build
+        working-directory: ${{ steps.detect.outputs.dir }}
 
       - name: Configure AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
       - name: whoami
         run: aws sts get-caller-identity
 
-      - name: Deploy to S3 with proper caching
-        working-directory: frontend
+      - name: Deploy to S3 with cache control
         run: |
-          aws s3 sync dist "s3://$S3_BUCKET_NAME" --delete \
+          set -e
+          DIST="${{ steps.detect.outputs.dir }}/dist"
+          [ -d "$DIST" ] || { echo "::error::dist not found"; exit 1; }
+
+          aws s3 sync "$DIST" "s3://$S3_BUCKET_NAME" --delete \
             --exclude "index.html" \
             --cache-control "public,max-age=3600"
 
-          find dist -type f \( -iname "*.png" -o -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.webp" -o -iname "*.svg" \) -print0 | \
+          find "$DIST" -type f \( -iname "*.png" -o -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.webp" -o -iname "*.svg" \) -print0 | \
             xargs -0 -I{} aws s3 cp "{}" "s3://$S3_BUCKET_NAME/{}" \
               --cache-control "public,max-age=31536000" \
               --metadata-directive REPLACE
 
-          aws s3 cp dist/index.html "s3://$S3_BUCKET_NAME/index.html" \
+          aws s3 cp "$DIST/index.html" "s3://$S3_BUCKET_NAME/index.html" \
             --cache-control "no-cache, must-revalidate" \
             --content-type "text/html" \
             --metadata-directive REPLACE
 
       - name: Invalidate CloudFront
         run: |
-          aws cloudfront create-invalidation \
-            --distribution-id "$DISTRIBUTION_ID" \
-            --paths "/index.html" "/assets/*"
+          set -e
+          aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/index.html" "/assets/*"

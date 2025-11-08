@@ -10,7 +10,7 @@ AWS Bedrock Titan Image Generator v1 で夕景カードを生成し、S3/CloudFr
 | `services/lambda/generate-card/` | Bedrock Titan v1 を呼び出してカード画像を生成し、Pillow でテキストを重ねて S3 に保存します。|
 | `layers/pillow/` | Lambda Layer (Pillow) のビルドスクリプト。manylinux wheel を取得して `pillow-layer.zip` を生成します。|
 | `infra/cdk/` | CDK アプリ。S3(画像), CloudFront(OAC), API Gateway, Lambda, Lambda Layer, IAM、Route 53 Hosted Zone の IaC。|
-| `.github/workflows/*.yml` | `deploy.yml` は CDK synth/diff/deploy、`frontend-build.yml` は Vite ビルド→S3 sync→CloudFront 無効化を実行します。|
+| `.github/workflows/*.yml` | `deploy.yml` (pnpm + CDK)、`frontend-build.yml` (pnpm + S3 sync) に加えて、OIDC AssumeRole で動く `cdk-deploy.yml` / `frontend-build-deploy.yml` を用意しています。|
 | `Makefile` | `make bootstrap / deploy / destroy` で CDK 操作を共通化します。|
 
 ## 事前準備
@@ -82,6 +82,22 @@ UI ではフォーム送信→生成中スピナー→生成結果グリッド�
   - `frontend/**` 更新時または手動実行。
   - `pnpm --filter sunset-forecast-frontend build` → `aws s3 sync frontend/dist ...`。
   - `FRONTEND_DEPLOY_BUCKET`, `FRONTEND_DISTRIBUTION_ID`, `FRONTEND_API_URL`, `DEPLOY_ROLE_ARN` を Secrets で指定してください。
+- `.github/workflows/cdk-deploy.yml`
+  - GitHub OIDC + `aws-actions/configure-aws-credentials@v4` で IAM Role を Assume。
+  - Node.js 20 / `npm ci` / `npx cdk synth → bootstrap → deploy --require-approval never` を us-east-1 既定で実行します。
+- `.github/workflows/frontend-build-deploy.yml`
+  - Vite ビルド前に Secrets をガードし、`frontend`（またはルート）ディレクトリを自動検出。
+  - `dist/` を S3 にキャッシュ制御付きで配置し、`index.html` と `/assets/*` を CloudFront で無効化します。
+
+## 必要な GitHub Secrets 一覧
+
+| Secret | 説明 |
+| --- | --- |
+| `AWS_ROLE_TO_ASSUME` | GitHub Actions から Assume する IAM ロール ARN。 |
+| `AWS_REGION` | 既定は `us-east-1`（CDK/Bedrock 用）。別リージョンを使う場合はここで指定します。 |
+| `S3_BUCKET_NAME` | フロントエンドを配置する静的サイト用 S3 バケット名。 |
+| `DISTRIBUTION_ID` | 配信中の CloudFront Distribution ID。 |
+| `VITE_API_URL` | フロントビルドで埋め込む API Gateway の完全 URL。 |
 
 ## Route 53 ドメイン手順
 
