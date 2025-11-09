@@ -19,8 +19,6 @@ import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Spinner } from "./ui/spinner";
 
-type DesignVariant = "simple" | "gradient";
-type TextScale = "md" | "lg";
 type GenerateResponse = {
   imageUrl: string;
   objectKey: string;
@@ -69,8 +67,6 @@ export default function SunsetCard() {
   const [selectedSpotId, setSelectedSpotId] = useState<string>(DEFAULT_SPOT.id);
   const [location, setLocation] = useState(DEFAULT_SPOT.name);
   const [coords, setCoords] = useState(DEFAULT_COORDS);
-  const [design, setDesign] = useState<DesignVariant>("gradient");
-  const [textScale, setTextScale] = useState<TextScale>("md");
   const [score, setScore] = useState(50);
   const [sunsetScore, setSunsetScore] = useState<number | null>(null);
   const [sunsetTime, setSunsetTime] = useState("--:--");
@@ -259,8 +255,8 @@ export default function SunsetCard() {
         conditions: metrics.weather,
         score: displayScore,
         sunsetTime: displaySunsetTime,
-        style: design,
-        textSize: textScale
+        style: "gradient",
+        textSize: "md"
       });
       const nextUrl = resolveImageUrl(response);
       if (!nextUrl) {
@@ -384,14 +380,9 @@ export default function SunsetCard() {
                       <div className="flex h-full w-full items-center justify-center text-white/60">サンプル画像を追加してください</div>
                     )}
                   </div>
-                  <div
-                    className={cn(
-                      "pointer-events-none absolute inset-x-0 bottom-0 flex flex-col gap-2 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-6 pb-6 text-white",
-                      textScale === "lg" ? "text-[1.15rem]" : "text-base"
-                    )}
-                  >
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col gap-2 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-6 pb-6 text-white text-base">
                     <div className="flex items-center justify-between text-sm text-white/80">
-                      <span>{design === "gradient" ? "グラデーションカード" : "シンプルカード"}</span>
+                      <span>Sunset Forecast Card</span>
                       {lastGeneratedAt && <span>最終生成 {lastGeneratedAt}</span>}
                     </div>
                     <div className="flex items-center justify-between">
@@ -404,7 +395,7 @@ export default function SunsetCard() {
                       </div>
                       <div className="text-right">
                         <p className="text-sm text-white/70">日の入り</p>
-                        <p className={cn("font-semibold", textScale === "lg" ? "text-3xl" : "text-2xl")}>{displaySunsetTime}</p>
+                        <p className="font-semibold text-2xl">{displaySunsetTime}</p>
                       </div>
                     </div>
                   </div>
@@ -494,44 +485,6 @@ export default function SunsetCard() {
           </article>
 
           <aside className="space-y-6 rounded-[32px] border border-white/5 bg-white/5 p-5 text-white">
-            <div className="space-y-3">
-              <p className="text-xs uppercase tracking-[0.4em] text-white/60">カードデザイン</p>
-              <div className="grid grid-cols-2 gap-3">
-                {(["simple", "gradient"] as DesignVariant[]).map((variant) => (
-                  <button
-                    key={variant}
-                    type="button"
-                    onClick={() => setDesign(variant)}
-                    className={cn(
-                      "rounded-2xl border px-4 py-3 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2",
-                      design === variant ? "border-amber-300 bg-amber-300/10 text-white" : "border-white/10 bg-transparent text-white/70"
-                    )}
-                  >
-                    {variant === "simple" ? "シンプル" : "グラデ"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <p className="text-xs uppercase tracking-[0.4em] text-white/60">テキストサイズ</p>
-              <div className="grid grid-cols-2 gap-3">
-                {(["md", "lg"] as TextScale[]).map((size) => (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => setTextScale(size)}
-                    className={cn(
-                      "rounded-2xl border px-4 py-3 text-sm font-semibold transition",
-                      textScale === size ? "border-amber-200 bg-amber-200/10 text-white" : "border-white/10 text-white/70"
-                    )}
-                  >
-                    {size === "md" ? "通常" : "大きめ"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             <div className="space-y-2">
               <Label className="text-xs uppercase tracking-[0.4em] text-white/60">撮影地点</Label>
               <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-sm font-semibold text-white">
