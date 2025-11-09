@@ -1,14 +1,14 @@
 name: CDK Deploy
 
+permissions:
+  id-token: write
+  contents: read
+
 on:
   push:
     branches:
       - main
   workflow_dispatch:
-
-permissions:
-  id-token: write
-  contents: read
 
 jobs:
   deploy:
@@ -20,22 +20,14 @@ jobs:
         with:
           node-version: 20
 
-      - name: Guard required secrets
-        env:
-          AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          set -e
-          for v in AWS_ROLE_TO_ASSUME AWS_REGION; do
-            [ -n "${!v}" ] || { echo "::error::missing secret $v"; exit 1; }
-          done
-
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: arn:aws:iam::869935094495:role/GhActions-cdk-admin
+          aws-region: us-east-1
+          audience: sts.amazonaws.com
+          role-session-name: gh-sunsetmatsue-t-cdk
 
-      - name: whoami
+      - name: WhoAmI
         run: aws sts get-caller-identity
 
       - name: Install CDK deps

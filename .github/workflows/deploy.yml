@@ -1,4 +1,8 @@
-name: CDK Deploy
+name: Backend & Infra Deploy
+
+permissions:
+  id-token: write
+  contents: read
 
 on:
   workflow_dispatch:
@@ -22,9 +26,6 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
 
     steps:
       - name: Checkout
@@ -47,8 +48,13 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.DEPLOY_ROLE_ARN }}
+          role-to-assume: arn:aws:iam::869935094495:role/GhActions-cdk-admin
           aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+          role-session-name: gh-sunsetmatsue-t-deploy
+
+      - name: WhoAmI
+        run: aws sts get-caller-identity
 
       - name: CDK Synth
         run: pnpm --filter sunset-forecast-infra cdk synth
