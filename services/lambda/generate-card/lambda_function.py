@@ -1,6 +1,8 @@
 import base64
+import datetime as dt
 import json
 import logging
+import math
 import os
 import re
 import uuid
@@ -10,6 +12,8 @@ from io import BytesIO
 from typing import Any, Dict, Optional
 
 import boto3
+import pytz
+import requests
 from astral import LocationInfo
 from astral.sun import sun
 from botocore.exceptions import BotoCoreError, ClientError
@@ -28,6 +32,9 @@ CODE_VERSION = os.getenv("CODE_VERSION", "2025-11-07-02")
 JST = ZoneInfo("Asia/Tokyo")
 FIXED_LAT = 35.4690
 FIXED_LON = 133.0505
+LAT = 35.4727
+LON = 133.0505
+TZ = pytz.timezone("Asia/Tokyo")
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "https://matsuesunsetai.com",
@@ -35,6 +42,45 @@ CORS_HEADERS = {
     "Access-Control-Allow-Headers": "Content-Type,Authorization",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
 }
+
+
+def _sunset_jst(target_date: dt.date) -> dt.datetime:
+    loc = LocationInfo(latitude=LAT, longitude=LON)
+    s = sun(loc.observer, date=target_date, tzinfo=TZ)
+    return s["sunset"]
+
+
+def _open_meteo_hourly(date_str: str) -> Dict[str, Any]:
+    url = (
+        "https://api.open-meteo.com/v1/air-quality"
+        f"?latitude={LAT}&longitude={LON}"
+        "&hourly=pm2_5,cloudcover,relative_humidity_2m"
+        "&timezone=Asia%2FTokyo"
+        f"&start_date={date_str}&end_date={date_str}"
+    )
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+    data = response.json()
+    return data["hourly"]
+
+
+def _nearest_index(times: list[dt.datetime], target: dt.datetime) -> int:
+    if not times:
+        raise ValueError("No hourly forecast points in response")
+    return min(range(len(times)), key=lambda i: math.fabs((times[i] - target).total_seconds()))
+
+
+def _response(body: Dict[str, Any], status: int = 200) -> Dict[str, Any]:
+    headers = {
+        "Content-Type": "application/json",
+        "Cache-Control": "public, max-age=3600",
+    }
+    headers.update(CORS_HEADERS)
+    return {
+        "statusCode": status,
+        "headers": headers,
+        "body": json.dumps(body, ensure_ascii=False),
+    }
 
 if not OUTPUT_BUCKET:
     LOGGER.error(json.dumps({"message": "Missing OUTPUT_BUCKET env", "codeVersion": CODE_VERSION}))
@@ -85,8 +131,53 @@ def _style_prompt(style: str) -> str:
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     request_id = getattr(context, "aws_request_id", str(uuid.uuid4()))
 
-    if event.get("httpMethod") == "OPTIONS":
+    path = (
+        (event.get("rawPath"))
+        or (event.get("path"))
+        or (event.get("requestContext", {}).get("http", {}).get("path"))
+        or ""
+    )
+    method = (
+        (event.get("requestContext", {}).get("http", {}).get("method"))
+        or event.get("httpMethod")
+        or "GET"
+    )
+
+    if method == "OPTIONS":
         return _options_response()
+
+    if method == "GET" and path.endswith("/forecast/sunset"):
+        qs = event.get("queryStringParameters") or {}
+        date_str = qs.get("date")
+        target_date = dt.date.fromisoformat(date_str) if date_str else dt.datetime.now(TZ).date()
+
+        try:
+            sunset = _sunset_jst(target_date)
+            hourly = _open_meteo_hourly(target_date.isoformat())
+            times: list[dt.datetime] = []
+            for raw in hourly.get("time", []):
+                parsed = dt.datetime.fromisoformat(raw)
+                if parsed.tzinfo is None:
+                    parsed = TZ.localize(parsed)
+                else:
+                    parsed = parsed.astimezone(TZ)
+                times.append(parsed)
+            idx = _nearest_index(times, sunset)
+            payload = {
+                "location": {"lat": LAT, "lon": LON},
+                "sunset_jst": sunset.isoformat(),
+                "source": "open-meteo",
+                "predicted": {
+                    "cloudCover_pct": hourly["cloudcover"][idx],
+                    "humidity_pct": hourly["relative_humidity_2m"][idx],
+                    "pm25_ugm3": hourly["pm2_5"][idx],
+                },
+                "hourly_timestamp": times[idx].isoformat(),
+                "cache_ttl_sec": 3600,
+            }
+            return _response(payload, 200)
+        except Exception as exc:  # pylint: disable=broad-except
+            return _response({"error": "forecast_failed", "detail": str(exc)}, 502)
 
     try:
         card_request = _parse_payload(event)

@@ -165,6 +165,28 @@ CDK が Hosted Zone / us-east-1 ACM 証明書 / matsuesunsetai.com 用の A・AA
 - 座標は「嫁ヶ島ビュー（35.4690, 133.0505）」に固定し、クライアントから渡された lat/lon は Lambda 内で無視します。
 - Astral (Python) で JST の日の入りを算出し、画像右下へ `Sunset HH:MM JST` を描画、さらに API レスポンスへ `sunsetJst` を追加してフロントでも表示します。
 
+### 予報 API (`/forecast/sunset`)
+
+- `GET /forecast/sunset?date=YYYY-MM-DD`
+  - `date` は任意。指定しない場合は当日 (JST) の予報を返します。
+  - Open-Meteo Air Quality API を使って `雲量 / 湿度 / PM2.5` を 1 時間解像度で取得し、日の入り時刻に最も近い値を返却します。
+  - レスポンス例:
+    ```json
+    {
+      "location": { "lat": 35.4727, "lon": 133.0505 },
+      "sunset_jst": "2025-11-09T17:00:00+09:00",
+      "source": "open-meteo",
+      "predicted": {
+        "cloudCover_pct": 42,
+        "humidity_pct": 68,
+        "pm25_ugm3": 7.4
+      },
+      "hourly_timestamp": "2025-11-09T17:00:00+09:00",
+      "cache_ttl_sec": 3600
+    }
+    ```
+- `Cache-Control: public, max-age=3600` を付与しているため、CloudFront / ブラウザ経由で 1 時間キャッシュされます (API Gateway ステージでの追加キャッシュ設定と併用可)。
+
 ### 正常系テスト
 
 1. CDK デプロイ後、Rest API URL (`.../prod/`) を確認。

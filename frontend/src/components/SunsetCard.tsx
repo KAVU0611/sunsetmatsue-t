@@ -52,6 +52,19 @@ interface Metrics {
   pm25: number | null;
 }
 
+interface SunsetForecastResponse {
+  location: { lat: number; lon: number };
+  sunset_jst: string;
+  source: string;
+  predicted: {
+    cloudCover_pct?: number;
+    humidity_pct?: number;
+    pm25_ugm3?: number;
+  };
+  hourly_timestamp?: string;
+  cache_ttl_sec?: number;
+}
+
 export default function SunsetCard() {
   const [selectedSpotId, setSelectedSpotId] = useState<string>(DEFAULT_SPOT.id);
   const [location, setLocation] = useState(DEFAULT_SPOT.name);
@@ -60,12 +73,16 @@ export default function SunsetCard() {
   const [textScale, setTextScale] = useState<TextScale>("md");
   const [score, setScore] = useState(50);
   const [sunsetTime, setSunsetTime] = useState("--:--");
+  const [metricsTab, setMetricsTab] = useState<"current" | "forecast">("current");
   const [metrics, setMetrics] = useState<Metrics>({
     weather: "取得中…",
     clouds: 0,
     humidity: 0,
     pm25: null
   });
+  const [forecast, setForecast] = useState<SunsetForecastResponse | null>(null);
+  const [loadingForecast, setLoadingForecast] = useState(false);
+  const [forecastError, setForecastError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState(DEFAULT_IMAGE);
   const [loadingMetrics, setLoadingMetrics] = useState(false);
   const [loadingImage, setLoadingImage] = useState(false);
@@ -136,6 +153,38 @@ export default function SunsetCard() {
     };
   }, [coords, apiMissing]);
 
+  useEffect(() => {
+    if (apiMissing || !apiConfig.baseUrl) return;
+    let cancelled = false;
+    const fetchForecast = async () => {
+      setLoadingForecast(true);
+      setForecastError(null);
+      try {
+        const res = await fetch(`${apiConfig.baseUrl}/forecast/sunset`, { cache: "no-store" });
+        if (!res.ok) {
+          throw new Error(`forecast fetch failed (${res.status})`);
+        }
+        const data: SunsetForecastResponse = await res.json();
+        if (!cancelled) {
+          setForecast(data);
+        }
+      } catch (error) {
+        console.error(error);
+        if (!cancelled) {
+          setForecastError("予報データを取得できませんでした");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingForecast(false);
+        }
+      }
+    };
+    fetchForecast();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiMissing]);
+
   const infoRow = useMemo(
     () => [
       { label: "観測地点", value: location, icon: <MapPin className="h-4 w-4 text-foreground/70" /> },
@@ -145,7 +194,7 @@ export default function SunsetCard() {
     [location, score, sunsetTime]
   );
 
-  const metricCards = [
+  const currentMetricCards = [
     { label: "天気", value: metrics.weather, icon: <Sun className="h-4 w-4" /> },
     { label: "雲量", value: `${metrics.clouds}%`, icon: <Cloud className="h-4 w-4" /> },
     { label: "湿度", value: `${metrics.humidity}%`, icon: <Droplets className="h-4 w-4" /> },
@@ -155,6 +204,34 @@ export default function SunsetCard() {
       icon: <Camera className="h-4 w-4" />
     }
   ];
+
+  const forecastMetricCards = [
+    { label: "雲量 (予測)", value: formatPercentOrPlaceholder(forecast?.predicted?.cloudCover_pct), icon: <Cloud className="h-4 w-4" /> },
+    { label: "湿度 (予測)", value: formatPercentOrPlaceholder(forecast?.predicted?.humidity_pct), icon: <Droplets className="h-4 w-4" /> },
+    {
+      label: "PM2.5 (予測)",
+      value: formatPmValue(forecast?.predicted?.pm25_ugm3),
+      icon: <Camera className="h-4 w-4" />
+    },
+    {
+      label: "日の入り予測",
+      value: formatSunset(forecast?.sunset_jst),
+      icon: <SunMedium className="h-4 w-4" />
+    }
+  ];
+
+  const displayMetricCards = metricsTab === "forecast" ? forecastMetricCards : currentMetricCards;
+  const forecastStatusText = loadingForecast ? (
+    <span className="inline-flex items-center gap-2">
+      <Spinner /> 予報データ取得中...
+    </span>
+  ) : forecastError ? (
+    <span className="text-red-200">{forecastError}</span>
+  ) : (
+    <span>
+      {forecast?.hourly_timestamp ? `最寄り時刻: ${formatForecastTimestamp(forecast.hourly_timestamp)}` : "最新データを取得済み"}
+    </span>
+  );
 
   const handleGenerate = async () => {
     if (apiMissing) {
@@ -360,9 +437,29 @@ export default function SunsetCard() {
                 </div>
 
                 <div className="rounded-3xl border border-white/5 bg-slate-900/40 p-5 text-white">
-                  <p className="text-xs uppercase tracking-[0.4em] text-white/60">詳細メトリクス</p>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs uppercase tracking-[0.4em] text-white/60">詳細メトリクス</p>
+                    <div className="inline-flex items-center rounded-full border border-white/15 bg-white/5 p-1 text-xs font-medium text-white/70">
+                      {["current", "forecast"].map((tab) => (
+                        <button
+                          key={tab}
+                          type="button"
+                          onClick={() => setMetricsTab(tab as "current" | "forecast")}
+                          className={cn(
+                            "rounded-full px-3 py-1 transition",
+                            metricsTab === tab ? "bg-white text-slate-900" : "text-white/70"
+                          )}
+                        >
+                          {tab === "current" ? "現在" : "日の入り予測"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {metricsTab === "forecast" && (
+                    <div className="mt-2 text-[11px] text-white/70">{forecastStatusText}</div>
+                  )}
                   <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                    {metricCards.map((metric) => (
+                    {displayMetricCards.map((metric) => (
                       <div key={metric.label} className="rounded-2xl border border-white/10 bg-white/5 p-3">
                         <p className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-white/50">
                           {metric.icon}
@@ -372,6 +469,9 @@ export default function SunsetCard() {
                       </div>
                     ))}
                   </div>
+                  {metricsTab === "forecast" && (
+                    <p className="mt-3 text-[11px] text-white/60">予報は時間分解能1時間。日の入り±30分の誤差あり</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -470,6 +570,30 @@ export default function SunsetCard() {
 function formatSunset(value?: string) {
   if (!value) return "--:--";
   if (/^\d{1,2}:\d{2}$/.test(value)) return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatPercentOrPlaceholder(value?: number) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return `${Math.round(value)}%`;
+  }
+  return "--";
+}
+
+function formatPmValue(value?: number) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return `${value.toFixed(1)} µg/m³`;
+  }
+  return "データ取得中";
+}
+
+function formatForecastTimestamp(value?: string) {
+  if (!value) return "--:--";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleTimeString("ja-JP", {
