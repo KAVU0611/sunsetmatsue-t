@@ -18,7 +18,7 @@ jobs:
       AWS_REGION: ${{ secrets.AWS_REGION }}
       S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME || secrets.FRONTEND_DEPLOY_BUCKET }}
       DISTRIBUTION_ID: ${{ secrets.DISTRIBUTION_ID || secrets.FRONTEND_DISTRIBUTION_ID }}
-      VITE_API_URL: ${{ secrets.VITE_API_URL }}
+      VITE_API_URL: ${{ secrets.VITE_API_URL || vars.VITE_API_URL || 'https://3s9sgxfexe.execute-api.us-east-1.amazonaws.com/prod' }}
     steps:
       - uses: actions/checkout@v4
 
