@@ -243,6 +243,10 @@ export class SunsetForecastStack extends Stack {
     generateCardResource.addMethod("POST", new apigateway.LambdaIntegration(generateCardFn));
     this.addCorsOptions(generateCardResource);
 
+    const forecastResource = apiV1.addResource("forecast").addResource("sunset");
+    forecastResource.addMethod("GET", new apigateway.LambdaIntegration(generateCardFn));
+    this.addCorsOptions(forecastResource);
+
     const oac = new cloudfront.CfnOriginAccessControl(this, "ImagesOAC", {
       originAccessControlConfig: {
         name: `${Stack.of(this).stackName}-images-oac`,

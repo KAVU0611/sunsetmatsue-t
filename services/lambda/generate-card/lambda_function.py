@@ -51,17 +51,33 @@ def _sunset_jst(target_date: dt.date) -> dt.datetime:
 
 
 def _open_meteo_hourly(date_str: str) -> Dict[str, Any]:
-    url = (
-        "https://api.open-meteo.com/v1/air-quality"
-        f"?latitude={LAT}&longitude={LON}"
-        "&hourly=pm2_5,cloudcover,relative_humidity_2m"
-        "&timezone=Asia%2FTokyo"
+    common = (
+        f"latitude={LAT}&longitude={LON}"
+        f"&timezone=Asia%2FTokyo"
         f"&start_date={date_str}&end_date={date_str}"
     )
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    data = response.json()
-    return data["hourly"]
+
+    forecast_url = f"https://api.open-meteo.com/v1/forecast?hourly=cloudcover,relativehumidity_2m&{common}"
+    air_quality_url = f"https://air-quality-api.open-meteo.com/v1/air-quality?hourly=pm2_5&{common}"
+
+    forecast_resp = requests.get(forecast_url, timeout=10)
+    forecast_resp.raise_for_status()
+    forecast_hourly = forecast_resp.json().get("hourly", {})
+
+    air_resp = requests.get(air_quality_url, timeout=10)
+    air_resp.raise_for_status()
+    air_hourly = air_resp.json().get("hourly", {})
+
+    times = forecast_hourly.get("time", [])
+    pm_map = {ts: val for ts, val in zip(air_hourly.get("time", []), air_hourly.get("pm2_5", []))}
+    pm_list = [pm_map.get(ts) for ts in times]
+
+    return {
+        "time": times,
+        "cloudcover": forecast_hourly.get("cloudcover", []),
+        "relative_humidity_2m": forecast_hourly.get("relativehumidity_2m", []),
+        "pm2_5": pm_list,
+    }
 
 
 def _nearest_index(times: list[dt.datetime], target: dt.datetime) -> int:
