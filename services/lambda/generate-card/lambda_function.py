@@ -278,7 +278,8 @@ def _parse_payload(event: Dict[str, Any]) -> CardRequest:
 def _generate_image_from_bedrock(card: CardRequest) -> bytes:
     base_prompt = (
         "award-winning sunset photo of Lake Shinji at Matsue, featuring the tiny Yomegashima sandbar island "
-        "with pine trees and a red torii gate near the horizon, calm reflective water, cinematic warm gradients, "
+        "with pine trees and a red torii gate sitting on the island above the waterline (not floating in the lake), "
+        "seen near the horizon with calm reflective water and cinematic warm gradients, "
         f"weather feel {card.conditions}, location {card.location}, date {card.date}, no tourists, no text."
     )
     if card.prompt:
