@@ -6,7 +6,7 @@
     "Action": "sts:AssumeRoleWithWebIdentity",
     "Condition": {
       "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
-      "StringLike": { "token.actions.githubusercontent.com:sub": "repo:KAVU0611/sunsetmatsue:ref:refs/heads/main" }
+      "StringLike": { "token.actions.githubusercontent.com:sub": "repo:KAVU0611/sunsetmatsue-t:ref:refs/heads/main" }
     }
   }]
 }

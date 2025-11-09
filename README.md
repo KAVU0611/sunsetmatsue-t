@@ -94,7 +94,7 @@ UI ではフォーム送信→生成中スピナー→生成結果グリッド�
 `scripts/setup-oidc-and-secrets.sh` で以下を自動化できます。
 
 - `fix/gha-oidc-ci` ブランチ/PR の作成と最新テンプレートの維持
-- GitHub OIDC Provider / `GitHubActionsOIDC` ロールの作成・更新（AdministratorAccess 付与のうえ Trust Policy を `repo:KAVU0611/sunsetmatsue:ref:refs/heads/main` に限定）
+- GitHub OIDC Provider / `GitHubActionsOIDC` ロールの作成・更新（AdministratorAccess 付与のうえ Trust Policy を `repo:KAVU0611/sunsetmatsue-t:ref:refs/heads/main` に限定）
 - CloudFront / S3 / VITE_API_URL 値の自動検出（見つからなければ対話入力）
 - `AWS_ROLE_TO_ASSUME`, `AWS_REGION`, `S3_BUCKET_NAME`, `DISTRIBUTION_ID`, `VITE_API_URL` の GitHub Secrets 設定と検証
 - `CDK Deploy` / `Frontend Build & Deploy` の実行 → PR オートマージ → main での再実行

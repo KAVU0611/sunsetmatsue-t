@@ -25,7 +25,7 @@ require_cmd() {
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-REPO_SLUG="KAVU0611/sunsetmatsue"
+REPO_SLUG="KAVU0611/sunsetmatsue-t"
 BRANCH_NAME="fix/gha-oidc-ci"
 ROLE_NAME="GitHubActionsOIDC"
 REGION_DEFAULT="us-east-1"
