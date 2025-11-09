@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 from io import BytesIO
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import boto3
 import pytz
@@ -20,6 +20,8 @@ from botocore.exceptions import BotoCoreError, ClientError
 from PIL import Image, ImageDraw, ImageFont
 from zoneinfo import ZoneInfo
 
+from providers import stability as stability_provider
+
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
@@ -29,6 +31,7 @@ OUTPUT_BUCKET = os.getenv("OUTPUT_BUCKET")
 CLOUDFRONT_DOMAIN = (os.getenv("CLOUDFRONT_DOMAIN") or "").strip()
 CDN_HOST = (os.getenv("CDN_HOST") or "").strip()
 CODE_VERSION = os.getenv("CODE_VERSION", "2025-11-07-02")
+IMG_PROVIDER = (os.getenv("IMG_PROVIDER") or "titan").strip().lower()
 JST = ZoneInfo("Asia/Tokyo")
 FIXED_LAT = 35.4690
 FIXED_LON = 133.0505
@@ -203,7 +206,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         card_request.sunset_time = sunset_str
         _log_info("request.received", request_id, payload=card_request.summary())
 
-        raw_image = _generate_image_from_bedrock(card_request)
+        raw_image = _generate_image(card_request)
         card_image = _overlay_text(raw_image, card_request)
         object_key = _put_image_to_s3(card_image, card_request)
 
@@ -275,19 +278,32 @@ def _parse_payload(event: Dict[str, Any]) -> CardRequest:
     )
 
 
-def _generate_image_from_bedrock(card: CardRequest) -> bytes:
+def _generate_image(card: CardRequest) -> bytes:
+    prompt, negative = _compose_prompts(card)
+    if IMG_PROVIDER == "stability":
+        result = stability_provider.generate(prompt, negative, 1024, 1024)
+        return base64.b64decode(result["image_base64"])
+    return _generate_image_with_bedrock(prompt)
+
+
+def _compose_prompts(card: CardRequest) -> Tuple[str, str]:
     base_prompt = (
         "award-winning sunset photo of Lake Shinji at Matsue, showcasing the tiny Yomegashima sandbar island with low stone shoreline, "
-        "windswept pines, and a light gray weathered torii gate standing firmly on the island ground above the waterline, "
-        "surrounded by calm reflective water and cinematic warm gradients."
-        f" Atmosphere: {card.conditions}, location: {card.location}, date: {card.date}, no people, no typography."
+        "windswept pines, and a pale gray weathered torii gate standing firmly on the island ground above the waterline. "
+        "Calm reflective water, cinematic warm gradients. "
+        f"Atmosphere: {card.conditions}. Location: {card.location}. Date: {card.date}. "
+        f"Visual treatment: {_style_prompt(card.style)}."
     )
     if card.prompt:
-        base_prompt = f"{base_prompt} {card.prompt}"
+        base_prompt = f"{base_prompt} {card.prompt}".strip()
+    negative_prompt = "people, tourists, cars, buildings, text, watermark, floating torii, floating island, distortion"
+    return base_prompt, negative_prompt
 
+
+def _generate_image_with_bedrock(prompt: str) -> bytes:
     titan_payload = {
         "taskType": "TEXT_IMAGE",
-        "textToImageParams": {"text": base_prompt},
+        "textToImageParams": {"text": prompt},
         "imageGenerationConfig": {
             "numberOfImages": 1,
             "height": 1024,
