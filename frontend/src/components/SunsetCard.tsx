@@ -164,7 +164,7 @@ export default function SunsetCard() {
       setLoadingForecast(true);
       setForecastError(null);
       try {
-        const res = await fetch(`${apiConfig.baseUrl}/forecast/sunset`, { cache: "no-store" });
+        const res = await fetch(`${apiConfig.baseUrl}/v1/forecast/sunset`, { cache: "no-store" });
         if (!res.ok) {
           throw new Error(`forecast fetch failed (${res.status})`);
         }
