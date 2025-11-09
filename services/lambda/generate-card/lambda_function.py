@@ -276,11 +276,16 @@ def _parse_payload(event: Dict[str, Any]) -> CardRequest:
 
 
 def _generate_image_from_bedrock(card: CardRequest) -> bytes:
+    yomegashima_prompt = (
+        "The composition must clearly feature the small Yomegashima island "
+        "sandbar in Lake Shinji, with its torii or silhouette visible near the horizon."
+    )
     base_prompt = (
         "award-winning landscape photography, cinematic sunset over calm water, "
         "rich gradients, volumetric golden light, crisp focus, no watermark. "
         f"Location hint: {card.location}. Date: {card.date}. "
         f"Weather impression: {card.conditions}. Style: {_style_prompt(card.style)}. "
+        f"{yomegashima_prompt} "
         f"Typography emphasis: {'bold headline look' if card.text_size == 'lg' else 'standard caption size'}."
     )
     if card.prompt:
