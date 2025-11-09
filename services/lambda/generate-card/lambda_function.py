@@ -281,8 +281,13 @@ def _parse_payload(event: Dict[str, Any]) -> CardRequest:
 def _generate_image(card: CardRequest) -> bytes:
     prompt, negative = _compose_prompts(card)
     if IMG_PROVIDER == "stability":
-        result = stability_provider.generate(prompt, negative, 1024, 1024)
-        return base64.b64decode(result["image_base64"])
+        try:
+            result = stability_provider.generate(prompt, negative, 1024, 1024)
+            return base64.b64decode(result["image_base64"])
+        except Exception as exc:  # pylint: disable=broad-except
+            _log_warning("stability.failed", str(uuid.uuid4()), error=str(exc))
+            # フォールバックで Titan を利用
+            return _generate_image_with_bedrock(prompt)
     return _generate_image_with_bedrock(prompt)
 
 

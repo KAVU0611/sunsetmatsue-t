@@ -10,6 +10,7 @@ _ENDPOINT = os.environ.get(
     "STABILITY_ENDPOINT",
     "https://api.stability.ai/v2beta/stable-image/generate/sd3"
 )
+_MODEL = os.environ.get("STABILITY_MODEL", "sd3")
 
 _cache = None
 
@@ -33,8 +34,15 @@ def generate(prompt: str, negative: str, width: int = 1024, height: int = 1024) 
         "width": width,
         "height": height,
         "output_format": "png",
+        "model": _MODEL,
     }
-    response = requests.post(_ENDPOINT, headers=headers, files={}, data=data, timeout=120)
+    response = requests.post(
+        _ENDPOINT,
+        headers=headers,
+        data=data,
+        files={"none": (None, "")},
+        timeout=120,
+    )
     response.raise_for_status()
 
     content_type = response.headers.get("Content-Type", "")
