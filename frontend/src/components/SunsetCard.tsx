@@ -72,6 +72,7 @@ export default function SunsetCard() {
   const [design, setDesign] = useState<DesignVariant>("gradient");
   const [textScale, setTextScale] = useState<TextScale>("md");
   const [score, setScore] = useState(50);
+  const [sunsetScore, setSunsetScore] = useState<number | null>(null);
   const [sunsetTime, setSunsetTime] = useState("--:--");
   const [metricsTab, setMetricsTab] = useState<"current" | "forecast">("current");
   const [metrics, setMetrics] = useState<Metrics>({
@@ -91,6 +92,9 @@ export default function SunsetCard() {
   const [lastGeneratedAt, setLastGeneratedAt] = useState<string | null>(null);
 
   const apiMissing = !apiConfig.baseUrl;
+  const displaySunsetTime = forecast?.sunset_jst ? formatSunset(forecast.sunset_jst) : sunsetTime;
+  const displayScore = clampScore(sunsetScore ?? score);
+  const isForecastScore = sunsetScore !== null;
   const resolveImageUrl = (result: GenerateCardResponse) => {
     const preferredKey =
       result.objectKey ??
@@ -167,11 +171,13 @@ export default function SunsetCard() {
         const data: SunsetForecastResponse = await res.json();
         if (!cancelled) {
           setForecast(data);
+          setSunsetScore(calculateSunsetScore(data.predicted));
         }
       } catch (error) {
         console.error(error);
         if (!cancelled) {
           setForecastError("予報データを取得できませんでした");
+          setSunsetScore(null);
         }
       } finally {
         if (!cancelled) {
@@ -188,10 +194,14 @@ export default function SunsetCard() {
   const infoRow = useMemo(
     () => [
       { label: "観測地点", value: location, icon: <MapPin className="h-4 w-4 text-foreground/70" /> },
-      { label: "夕日指数", value: `${score} / 100`, icon: <Sun className="h-4 w-4 text-foreground/70" /> },
-      { label: "日の入り", value: sunsetTime, icon: <SunMedium className="h-4 w-4 text-foreground/70" /> }
+      {
+        label: "夕日指数",
+        value: `${displayScore} / 100`,
+        icon: <Sun className="h-4 w-4 text-foreground/70" />
+      },
+      { label: "日の入り", value: displaySunsetTime, icon: <SunMedium className="h-4 w-4 text-foreground/70" /> }
     ],
-    [location, score, sunsetTime]
+    [location, displayScore, displaySunsetTime]
   );
 
   const currentMetricCards = [
@@ -247,8 +257,8 @@ export default function SunsetCard() {
         location,
         date: todaysDate,
         conditions: metrics.weather,
-        score,
-        sunsetTime,
+        score: displayScore,
+        sunsetTime: displaySunsetTime,
         style: design,
         textSize: textScale
       });
@@ -290,7 +300,7 @@ export default function SunsetCard() {
 
   const handleShareX = () => {
     if (!previewUrl) return;
-    const text = `松江の夕日指数 ${score}/100 ・日の入り ${sunsetTime}`;
+    const text = `松江の夕日指数 ${displayScore}/100 ・日の入り ${displaySunsetTime}`;
     const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(
       previewUrl
     )}&hashtags=sunsetforecast`;
@@ -387,11 +397,14 @@ export default function SunsetCard() {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-xl font-semibold leading-tight">{location}</p>
-                        <p className="text-sm text-white/70">Sunset Score {score}/100</p>
+                        <p className="text-sm text-white/70">
+                          Sunset Score {displayScore}/100
+                          {isForecastScore && <span className="ml-2 text-xs">（日の入り予測）</span>}
+                        </p>
                       </div>
                       <div className="text-right">
                         <p className="text-sm text-white/70">日の入り</p>
-                        <p className={cn("font-semibold", textScale === "lg" ? "text-3xl" : "text-2xl")}>{sunsetTime}</p>
+                        <p className={cn("font-semibold", textScale === "lg" ? "text-3xl" : "text-2xl")}>{displaySunsetTime}</p>
                       </div>
                     </div>
                   </div>
@@ -418,7 +431,7 @@ export default function SunsetCard() {
                   <p className="text-xs uppercase tracking-[0.4em] text-white/60">夕日指数</p>
                   <div className="mt-3 flex items-end justify-between">
                     <div>
-                      <p className="text-5xl font-semibold">{score}</p>
+                      <p className="text-5xl font-semibold">{displayScore}</p>
                       <p className="text-xs text-white/60">0 = 厳しい / 100 = ベスト</p>
                     </div>
                     <div className="text-right text-sm text-white/70">
@@ -427,12 +440,15 @@ export default function SunsetCard() {
                           <Spinner /> 更新中
                         </span>
                       ) : (
-                        <span>API: sunset-index</span>
+                        <span>API: {isForecastScore ? "forecast/sunset" : "sunset-index"}</span>
                       )}
                     </div>
                   </div>
                   <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-white/10">
-                    <div className="h-full rounded-full bg-gradient-to-r from-amber-300 via-orange-400 to-pink-400" style={{ width: `${score}%` }} />
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-amber-300 via-orange-400 to-pink-400"
+                      style={{ width: `${displayScore}%` }}
+                    />
                   </div>
                 </div>
 
@@ -600,6 +616,32 @@ function formatForecastTimestamp(value?: string) {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function clampScore(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function calculateSunsetScore(predicted?: SunsetForecastResponse["predicted"]): number | null {
+  if (!predicted) return null;
+  const clouds = toFiniteNumber(predicted.cloudCover_pct, 60);
+  const humidity = toFiniteNumber(predicted.humidity_pct, 65);
+  const pm = toFiniteNumber(predicted.pm25_ugm3, 12);
+
+  const cloudTerm = Math.max(0, 35 - Math.abs(45 - clouds) * 0.7);
+  const humidityTerm = Math.max(0, 20 - Math.max(0, humidity - 55) * 0.5);
+  const pmTerm = Math.max(0, 30 - Math.max(0, pm - 12) * 2);
+  const baseline = 15; // wind・視程など取得できない項目の仮加点
+
+  return clampScore(cloudTerm + humidityTerm + pmTerm + baseline);
+}
+
+function toFiniteNumber(value: number | undefined | null, fallback: number) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return fallback;
 }
 
 function deriveObjectKeyFromUrl(candidate?: string) {
