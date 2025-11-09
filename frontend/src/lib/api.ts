@@ -1,4 +1,6 @@
-const BASE = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
+const DEFAULT_API_BASE = "https://3s9sgxfexe.execute-api.us-east-1.amazonaws.com/prod";
+const RAW_BASE = (import.meta.env.VITE_API_URL ?? "").trim();
+const BASE = (RAW_BASE || DEFAULT_API_BASE).replace(/\/$/, "");
 const METRICS_PATH = import.meta.env.VITE_METRICS_API || "/v1/sunset-index";
 const IMAGE_PATH = import.meta.env.VITE_IMAGE_API || "/v1/generate-card";
 const TIMEOUT_MS = 15_000;
