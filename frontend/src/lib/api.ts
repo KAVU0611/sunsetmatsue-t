@@ -3,7 +3,8 @@ const RAW_BASE = (import.meta.env.VITE_API_URL ?? "").trim();
 const BASE = (RAW_BASE || DEFAULT_API_BASE).replace(/\/$/, "");
 const METRICS_PATH = import.meta.env.VITE_METRICS_API || "/v1/sunset-index";
 const IMAGE_PATH = import.meta.env.VITE_IMAGE_API || "/v1/generate-card";
-const FORECAST_PATH = import.meta.env.VITE_FORECAST_API || "/v1/forecast/sunset";
+const FORECAST_PATH = (import.meta.env.VITE_FORECAST_API || "/forecast/sunset").trim() || "/forecast/sunset";
+const LEGACY_FORECAST_PATH = "/v1/forecast/sunset";
 const TIMEOUT_MS = 15_000;
 
 type FetchOptions = RequestInit & { timeoutMs?: number };
@@ -135,10 +136,21 @@ export async function getSunsetForecast(params: SunsetForecastParams = {}) {
     query.set("lon", params.lon.toString());
   }
   const suffix = query.size > 0 ? `?${query.toString()}` : "";
-  return doFetch<SunsetForecastResponse>(`${BASE}${FORECAST_PATH}${suffix}`, {
-    method: "GET",
-    cache: "no-store"
-  });
+  const candidates = Array.from(
+    new Set([FORECAST_PATH, LEGACY_FORECAST_PATH].filter((path): path is string => Boolean(path && path.trim())))
+  );
+  let lastError: Error | null = null;
+  for (const path of candidates) {
+    try {
+      return await doFetch<SunsetForecastResponse>(`${BASE}${path}${suffix}`, {
+        method: "GET",
+        cache: "no-store"
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  throw lastError ?? new Error("Sunset forecast fetch failed");
 }
 
 export const apiConfig = {

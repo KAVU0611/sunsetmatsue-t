@@ -52,6 +52,12 @@ const DEFAULT_IMAGE = uiSamples.length > 0 ? encodeURI(uiSamples[0]) : "";
 const PLACEHOLDER_IMAGE = uiSamples[0] ?? "";
 const todaysDate = new Date().toISOString().split("T")[0];
 const CDN_BASE_URL = "https://matsuesunsetai.com";
+const JST_FORMATTER = new Intl.DateTimeFormat("ja-JP", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "Asia/Tokyo"
+});
 
 interface Metrics {
   weather: string;
@@ -551,10 +557,7 @@ function formatSunset(value?: string) {
   if (/^\d{1,2}:\d{2}$/.test(value)) return value;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleTimeString("ja-JP", {
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  return JST_FORMATTER.format(date);
 }
 
 function buildIsoTimestamp(clock?: string) {
@@ -585,10 +588,7 @@ function formatForecastTimestamp(value?: string) {
   if (!value) return "--:--";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleTimeString("ja-JP", {
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  return JST_FORMATTER.format(date);
 }
 
 function clampScore(value: number) {
