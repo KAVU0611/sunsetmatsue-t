@@ -52,12 +52,15 @@ const DEFAULT_IMAGE = uiSamples.length > 0 ? encodeURI(uiSamples[0]) : "";
 const PLACEHOLDER_IMAGE = uiSamples[0] ?? "";
 const todaysDate = new Date().toISOString().split("T")[0];
 const CDN_BASE_URL = "https://matsuesunsetai.com";
+const OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
+const OPEN_METEO_AIR_URL = "https://air-quality-api.open-meteo.com/v1/air-quality";
 const JST_FORMATTER = new Intl.DateTimeFormat("ja-JP", {
   hour: "2-digit",
   minute: "2-digit",
   hour12: false,
   timeZone: "Asia/Tokyo"
 });
+const DEFAULT_FORECAST_CLOCK = "17:00";
 
 interface Metrics {
   weather: string;
@@ -184,10 +187,26 @@ export default function SunsetCard() {
         if (cancelled) return;
         setForecast(response);
         setSunsetScore(calculateSunsetScore(response.predicted));
+        return;
       } catch (error) {
         console.error(error);
-        if (!cancelled) {
-          setForecastError("予報データを取得できませんでした");
+        if (cancelled) return;
+        try {
+          const fallback = await fetchOpenMeteoForecast({
+            date: todaysDate,
+            coords,
+            sunsetClock: sanitizeClockString(sunsetTime)
+          });
+          if (cancelled) return;
+          setForecast(fallback);
+          setSunsetScore(calculateSunsetScore(fallback.predicted));
+          setForecastError(null);
+          return;
+        } catch (fallbackError) {
+          console.error(fallbackError);
+          if (!cancelled) {
+            setForecastError("予報データを取得できませんでした");
+          }
         }
       } finally {
         if (!cancelled) {
@@ -199,7 +218,7 @@ export default function SunsetCard() {
     return () => {
       cancelled = true;
     };
-  }, [apiMissing, coords]);
+  }, [apiMissing, coords, sunsetTime]);
 
   const infoRow = useMemo(
     () => [
@@ -554,7 +573,12 @@ export default function SunsetCard() {
 
 function formatSunset(value?: string) {
   if (!value) return "--:--";
-  if (/^\d{1,2}:\d{2}$/.test(value)) return value;
+  const cleanedClock = sanitizeClockString(value);
+  if (cleanedClock) return cleanedClock;
+  const isoMatch = value.match(/T(\d{2}:\d{2})/);
+  if (isoMatch) {
+    return isoMatch[1];
+  }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return JST_FORMATTER.format(date);
@@ -586,6 +610,10 @@ function formatPmValue(value?: number) {
 
 function formatForecastTimestamp(value?: string) {
   if (!value) return "--:--";
+  const isoMatch = value.match(/T(\d{2}:\d{2})/);
+  if (isoMatch) {
+    return isoMatch[1];
+  }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return JST_FORMATTER.format(date);
@@ -627,11 +655,109 @@ function buildFallbackForecastFromIndex(response: SunsetIndexResponse, coords: C
   };
 }
 
+async function fetchOpenMeteoForecast(params: { date: string; coords: Coordinates; sunsetClock?: string }): Promise<SunsetForecastResponse> {
+  const { date, coords } = params;
+  const clock = params.sunsetClock ?? DEFAULT_FORECAST_CLOCK;
+  const query = new URLSearchParams({
+    latitude: coords.lat.toString(),
+    longitude: coords.lon.toString(),
+    timezone: "Asia/Tokyo",
+    start_date: date,
+    end_date: date
+  });
+
+  const [forecastResp, airResp] = await Promise.all([
+    fetch(`${OPEN_METEO_FORECAST_URL}?hourly=cloudcover,relativehumidity_2m&${query.toString()}`),
+    fetch(`${OPEN_METEO_AIR_URL}?hourly=pm2_5&${query.toString()}`)
+  ]);
+
+  if (!forecastResp.ok) {
+    throw new Error(`open-meteo forecast failed (${forecastResp.status})`);
+  }
+  if (!airResp.ok) {
+    throw new Error(`open-meteo air quality failed (${airResp.status})`);
+  }
+
+  const forecastJson = await forecastResp.json();
+  const airJson = await airResp.json();
+
+  const times: string[] = forecastJson?.hourly?.time ?? [];
+  const clouds: Array<number | null> = forecastJson?.hourly?.cloudcover ?? [];
+  const humidity: Array<number | null> = forecastJson?.hourly?.relativehumidity_2m ?? [];
+  const pmTimes: string[] = airJson?.hourly?.time ?? [];
+  const pmValues: Array<number | null> = airJson?.hourly?.pm2_5 ?? [];
+  const pmMap = new Map(pmTimes.map((time, index) => [time, pmValues[index]]));
+  const pmSeries = times.map((time) => pmMap.get(time) ?? null);
+
+  const targetClock = sanitizeClockString(clock) ?? DEFAULT_FORECAST_CLOCK;
+  const targetDateTime = buildJstDateTime(date, targetClock);
+  const nearestIndex = findNearestTimeIndex(times, targetDateTime);
+
+  const hourlyTimestamp = parseOpenMeteoTime(times[nearestIndex]);
+  return {
+    location: { lat: coords.lat, lon: coords.lon },
+    sunset_jst: targetDateTime.toISOString(),
+    source: "open-meteo-direct",
+    predicted: {
+      cloudCover_pct: toNullableNumber(clouds[nearestIndex]),
+      humidity_pct: toNullableNumber(humidity[nearestIndex]),
+      pm25_ugm3: toNullableNumber(pmSeries[nearestIndex])
+    },
+    hourly_timestamp: hourlyTimestamp.toISOString(),
+    cache_ttl_sec: 900
+  };
+}
+
+function buildJstDateTime(dateStr: string, clock: string) {
+  const normalizedClock = sanitizeClockString(clock) ?? DEFAULT_FORECAST_CLOCK;
+  const isoCandidate = `${dateStr}T${normalizedClock}:00+09:00`;
+  return new Date(isoCandidate);
+}
+
+function findNearestTimeIndex(times: string[], target: Date) {
+  if (times.length === 0) return 0;
+  let bestIndex = 0;
+  let bestDiff = Number.POSITIVE_INFINITY;
+  times.forEach((value, index) => {
+    const current = parseOpenMeteoTime(value);
+    const diff = Math.abs(current.getTime() - target.getTime());
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
+function parseOpenMeteoTime(value: string) {
+  if (!value) return new Date();
+  if (/Z|[+-]\d{2}:\d{2}$/.test(value)) {
+    return new Date(value);
+  }
+  return new Date(`${value}+09:00`);
+}
+
+function sanitizeClockString(value?: string) {
+  if (!value) return undefined;
+  const match = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return undefined;
+  const hour = match[1].padStart(2, "0");
+  const minute = match[2];
+  return `${hour}:${minute}`;
+}
+
 function toFiniteNumber(value: number | undefined | null, fallback: number) {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
   return fallback;
+}
+
+function toNullableNumber(value: number | undefined | null) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return undefined;
 }
 
 function deriveObjectKeyFromUrl(candidate?: string) {
