@@ -3,7 +3,7 @@ const RAW_BASE = (import.meta.env.VITE_API_URL ?? "").trim();
 const BASE = (RAW_BASE || DEFAULT_API_BASE).replace(/\/$/, "");
 const METRICS_PATH = import.meta.env.VITE_METRICS_API || "/v1/sunset-index";
 const IMAGE_PATH = import.meta.env.VITE_IMAGE_API || "/v1/generate-card";
-const FORECAST_PATH = import.meta.env.VITE_FORECAST_API || "/forecast/sunset";
+const FORECAST_PATH = import.meta.env.VITE_FORECAST_API || "/v1/forecast/sunset";
 const TIMEOUT_MS = 15_000;
 
 type FetchOptions = RequestInit & { timeoutMs?: number };
