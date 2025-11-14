@@ -25,19 +25,40 @@ from providers import stability as stability_provider
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        LOGGER.warning("Invalid %s value '%s', using default %s", name, raw, default)
+        return default
+
+
 MODEL_ID = os.getenv("MODEL_ID", "amazon.titan-image-generator-v1")
 BEDROCK_REGION = os.getenv("BEDROCK_REGION", "us-east-1")
 OUTPUT_BUCKET = os.getenv("OUTPUT_BUCKET")
 CLOUDFRONT_DOMAIN = (os.getenv("CLOUDFRONT_DOMAIN") or "").strip()
 CDN_HOST = (os.getenv("CDN_HOST") or "").strip()
 CODE_VERSION = os.getenv("CODE_VERSION", "2025-11-07-02")
-IMG_PROVIDER = (os.getenv("IMG_PROVIDER") or "titan").strip().lower()
+IMG_PROVIDER = (os.getenv("IMG_PROVIDER") or "stability").strip().lower()
+STABILITY_WIDTH = _int_env("STABILITY_WIDTH", 1344)
+STABILITY_HEIGHT = _int_env("STABILITY_HEIGHT", 768)
 JST = ZoneInfo("Asia/Tokyo")
 FIXED_LAT = 35.4690
 FIXED_LON = 133.0505
 LAT = 35.4727
 LON = 133.0505
 TZ = pytz.timezone("Asia/Tokyo")
+MAX_PROMPT_BYTES = 460
+PROMPT_REPLACEMENTS: list[Tuple[str, str]] = [
+    (r"\btorii gate\b", "minimalist shrine gateway"),
+    (r"\btorii\b", "shrine gateway"),
+    (r"\bvermilion\b", "sunlit red"),
+    (r"\bsacred\b", "historic"),
+]
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "https://matsuesunsetai.com",
@@ -141,8 +162,8 @@ class CardRequest:
 
 def _style_prompt(style: str) -> str:
     mapping = {
-        "simple": "clean documentary photography, minimal color grading, editorial feel",
-        "gradient": "dreamy gradient sky, cinematic glow, award-winning travel campaign poster",
+        "simple": "documentary realism, sony alpha color science, gentle contrast, natural dynamic range",
+        "gradient": "long exposure travel photography, magenta-to-amber gradient sky, subtle haze, editorial color grading",
     }
     return mapping.get(style, "cinematic sunset postcard with warm tones")
 
@@ -282,73 +303,148 @@ def _generate_image(card: CardRequest) -> bytes:
     prompt, negative = _compose_prompts(card)
     if IMG_PROVIDER == "stability":
         try:
-            result = stability_provider.generate(prompt, negative, 1024, 1024)
+            result = stability_provider.generate(prompt, negative, STABILITY_WIDTH, STABILITY_HEIGHT)
             return base64.b64decode(result["image_base64"])
         except Exception as exc:  # pylint: disable=broad-except
             _log_warning("stability.failed", str(uuid.uuid4()), error=str(exc))
             # フォールバックで Titan を利用
-            return _generate_image_with_bedrock(prompt)
-    return _generate_image_with_bedrock(prompt)
+            return _generate_image_with_bedrock(prompt, card)
+    return _generate_image_with_bedrock(prompt, card)
 
 
 def _compose_prompts(card: CardRequest) -> Tuple[str, str]:
     base_prompt = (
-        "award-winning sunset photo of Lake Shinji at Matsue, showcasing the tiny Yomegashima sandbar island with low stone shoreline, "
-        "windswept pines, and a pale gray weathered torii gate standing firmly on the island ground above the waterline. "
-        "Calm reflective water, cinematic warm gradients. "
-        f"Atmosphere: {card.conditions}. Location: {card.location}. Date: {card.date}. "
+        "cinematic travel photograph of Lake Shinji in Matsue, Japan, viewed from the promenade near the Shimane Art Museum toward the petite Yomegashima sandbar. "
+        "Show a clean stone shoreline, one windswept pine, and a modest gray shrine gateway resting on dry rocks above the tide. "
+        "Calm mirror water reflects the gateway and warm dusk sky while the distant city shoreline stays soft and low on the horizon. "
+        f"Atmosphere: {card.conditions}. Location: {card.location}. Date: {card.date} around {card.sunset_time} JST. "
         f"Visual treatment: {_style_prompt(card.style)}."
     )
     if card.prompt:
         base_prompt = f"{base_prompt} {card.prompt}".strip()
-    negative_prompt = "people, tourists, cars, buildings, text, watermark, floating torii, floating island, distortion"
+    base_prompt = _clamp_prompt(base_prompt)
+    negative_prompt = (
+        "people, tourists, boats, birds, cars, anime, cartoon, cgi render, watercolor, heavy bloom, extreme fog, floating torii, floating island, "
+        "multiple torii, exaggerated mountains, text, watermark, warped reflections, fantasy lighting"
+    )
     return base_prompt, negative_prompt
 
 
-def _generate_image_with_bedrock(prompt: str) -> bytes:
-    titan_payload = {
-        "taskType": "TEXT_IMAGE",
-        "textToImageParams": {"text": prompt},
-        "imageGenerationConfig": {
-            "numberOfImages": 1,
-            "height": 1024,
-            "width": 1024,
-            "cfgScale": 8,
-            "quality": "standard",
-        },
-    }
-    _log_info("bedrock.invoke", str(uuid.uuid4()), modelId=MODEL_ID)
+def _sanitize_prompt_for_bedrock(prompt: str) -> Optional[str]:
+    sanitized = prompt
+    for pattern, replacement in PROMPT_REPLACEMENTS:
+        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+    sanitized = sanitized.strip()
+    sanitized = _clamp_prompt(sanitized)
+    if sanitized != prompt:
+        return sanitized
+    return None
 
-    try:
-        response = bedrock.invoke_model(
-            modelId=MODEL_ID,
-            contentType="application/json",
-            accept="application/json",
-            body=json.dumps(titan_payload).encode("utf-8"),
+
+def _fallback_prompt(card: Optional[CardRequest]) -> str:
+    base = (
+        "peaceful golden-hour photograph of a tiny lakeside island with a subtle stone shoreline, "
+        "a minimalist shrine gateway, a lone pine tree, warm reflections on calm water, and the city of Matsue softly blurred in the distance."
+    )
+    if card:
+        base = (
+            f"{base} Weather impression: {card.conditions}. Shot inspired by Lake Shinji around {card.sunset_time} JST on {card.date}."
         )
-        payload = response["body"].read()
-    except (BotoCoreError, ClientError) as exc:
-        raise RuntimeError(f"Bedrock invoke failed: {exc}") from exc
+    return _clamp_prompt(base)
 
-    try:
-        parsed = json.loads(payload.decode("utf-8"))
-    except Exception:
+
+def _generate_image_with_bedrock(prompt: str, card: Optional[CardRequest] = None) -> bytes:
+    candidates = [_clamp_prompt(prompt)]
+    sanitized = _sanitize_prompt_for_bedrock(prompt)
+    if sanitized and sanitized not in candidates:
+        candidates.append(sanitized)
+    fallback = _fallback_prompt(card)
+    if fallback not in candidates:
+        candidates.append(fallback)
+
+    last_exc: Optional[Exception] = None
+    for candidate in candidates:
+        titan_payload = {
+            "taskType": "TEXT_IMAGE",
+            "textToImageParams": {"text": candidate},
+            "imageGenerationConfig": {
+                "numberOfImages": 1,
+                "height": 1024,
+                "width": 1024,
+                "cfgScale": 8,
+                "quality": "standard",
+            },
+        }
+        _log_info("bedrock.invoke", str(uuid.uuid4()), modelId=MODEL_ID)
+
         try:
-            return base64.b64decode(payload)
-        except Exception as decode_error:  # pylint: disable=broad-except
-            raise RuntimeError(f"Bedrock response decode failed: {decode_error}") from decode_error
+            response = bedrock.invoke_model(
+                modelId=MODEL_ID,
+                contentType="application/json",
+                accept="application/json",
+                body=json.dumps(titan_payload).encode("utf-8"),
+            )
+            payload = response["body"].read()
+        except ClientError as exc:
+            if _is_content_filter_error(exc):
+                last_exc = exc
+                _log_warning("bedrock.filtered", str(uuid.uuid4()), prompt="content_filtered")
+                continue
+            raise RuntimeError(f"Bedrock invoke failed: {exc}") from exc
+        except BotoCoreError as exc:
+            raise RuntimeError(f"Bedrock invoke failed: {exc}") from exc
 
-    image_b64 = _extract_image_base64(parsed)
-    if not image_b64:
-        raise RuntimeError("No image data returned from Bedrock")
+        try:
+            parsed = json.loads(payload.decode("utf-8"))
+        except Exception:
+            try:
+                return base64.b64decode(payload)
+            except Exception as decode_error:  # pylint: disable=broad-except
+                raise RuntimeError(f"Bedrock response decode failed: {decode_error}") from decode_error
 
-    if isinstance(image_b64, str) and image_b64.startswith("data:image"):
-        image_b64 = image_b64.split(",", 1)[-1]
+        image_b64 = _extract_image_base64(parsed)
+        if not image_b64:
+            last_exc = RuntimeError("No image data returned from Bedrock")
+            continue
 
-    try:
-        return base64.b64decode(image_b64)
-    except Exception as exc:  # pylint: disable=broad-except
-        raise RuntimeError(f"Unable to decode image: {exc}") from exc
+        if isinstance(image_b64, str) and image_b64.startswith("data:image"):
+            image_b64 = image_b64.split(",", 1)[-1]
+
+        try:
+            return base64.b64decode(image_b64)
+        except Exception as exc:  # pylint: disable=broad-except
+            last_exc = exc
+            continue
+
+    if last_exc:
+        raise RuntimeError(f"Image generation failed after sanitizing prompts: {last_exc}") from last_exc
+    raise RuntimeError("Image generation failed: no valid response from Bedrock")
+
+
+def _is_content_filter_error(exc: ClientError) -> bool:
+    error = exc.response.get("Error", {})
+    if error.get("Code") != "ValidationException":
+        return False
+    message = (error.get("Message") or "").lower()
+    return "content filters" in message
+
+
+def _clamp_prompt(text: str, limit: int = MAX_PROMPT_BYTES) -> str:
+    text = text.strip()
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text
+    truncated_bytes = encoded[:limit]
+    truncated = truncated_bytes.decode("utf-8", "ignore").rstrip()
+    if not truncated:
+        truncated = text[: limit // 2]
+    result = f"{truncated}…"
+    while len(result.encode("utf-8")) > limit:
+        truncated = truncated[:-1].rstrip()
+        result = f"{truncated}…"
+        if not truncated:
+            return "Lake Shinji sunset postcard…"
+    return result
 
 
 def _extract_image_base64(payload: Dict[str, Any]) -> Optional[str]:

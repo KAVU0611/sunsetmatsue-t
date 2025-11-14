@@ -123,6 +123,8 @@ export default function SunsetCard() {
     let cancelled = false;
     const load = async () => {
       setLoadingMetrics(true);
+      setLoadingForecast(true);
+      setForecastError(null);
       try {
         const response = await getSunsetIndex(coords);
         if (cancelled) return;
@@ -136,14 +138,34 @@ export default function SunsetCard() {
           humidity: response.metrics?.humidity ?? 0,
           pm25: typeof response.metrics?.pm25 === "number" ? response.metrics?.pm25 : null
         });
+        const predictedMetrics = {
+          cloudCover_pct: response.metrics?.clouds ?? undefined,
+          humidity_pct: response.metrics?.humidity ?? undefined,
+          pm25_ugm3: typeof response.metrics?.pm25 === "number" ? response.metrics?.pm25 : undefined
+        };
+        const isoSunset = response.sunsetTimeIso ?? buildIsoTimestamp(response.sunsetTime);
+        const derivedForecast: SunsetForecastResponse = {
+          location: { lat: coords.lat, lon: coords.lon },
+          sunset_jst: isoSunset ?? response.sunsetTime ?? "",
+          source: "sunset-index",
+          predicted: predictedMetrics,
+          hourly_timestamp: isoSunset ?? new Date().toISOString(),
+          cache_ttl_sec: 300
+        };
+        setForecast(derivedForecast);
+        setSunsetScore(calculateSunsetScore(predictedMetrics));
+        setForecastError(null);
       } catch (error) {
         console.error(error);
         if (!cancelled) {
           setToast({ message: "現在メンテナンス中 または通信に失敗しました", tone: "error" });
+          setForecastError("予報データを取得できませんでした");
+          setSunsetScore(null);
         }
       } finally {
         if (!cancelled) {
           setLoadingMetrics(false);
+          setLoadingForecast(false);
         }
       }
     };
@@ -152,40 +174,6 @@ export default function SunsetCard() {
       cancelled = true;
     };
   }, [coords, apiMissing]);
-
-  useEffect(() => {
-    if (apiMissing || !apiConfig.baseUrl) return;
-    let cancelled = false;
-    const fetchForecast = async () => {
-      setLoadingForecast(true);
-      setForecastError(null);
-      try {
-        const res = await fetch(`${apiConfig.baseUrl}/v1/forecast/sunset`, { cache: "no-store" });
-        if (!res.ok) {
-          throw new Error(`forecast fetch failed (${res.status})`);
-        }
-        const data: SunsetForecastResponse = await res.json();
-        if (!cancelled) {
-          setForecast(data);
-          setSunsetScore(calculateSunsetScore(data.predicted));
-        }
-      } catch (error) {
-        console.error(error);
-        if (!cancelled) {
-          setForecastError("予報データを取得できませんでした");
-          setSunsetScore(null);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingForecast(false);
-        }
-      }
-    };
-    fetchForecast();
-    return () => {
-      cancelled = true;
-    };
-  }, [apiMissing]);
 
   const infoRow = useMemo(
     () => [
@@ -402,7 +390,9 @@ export default function SunsetCard() {
                 </div>
               </div>
               {resp?.sunsetJst && (
-                <div className="text-sm text-gray-300 mt-1">日の入り（JST）: {resp.sunsetJst}</div>
+                <div className="mt-1 text-sm text-gray-300">
+                  日の入り（JST）: {formatSunset(resp.sunsetJst)}
+                </div>
               )}
 
               <div className="grid gap-4 rounded-3xl border border-white/5 bg-white/5 p-4 text-white/90 md:grid-cols-3">
@@ -545,6 +535,16 @@ function formatSunset(value?: string) {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function buildIsoTimestamp(clock?: string) {
+  if (!clock || !/^\d{1,2}:\d{2}$/.test(clock)) return undefined;
+  const [hour, minute] = clock.split(":").map((value) => Number(value));
+  if (Number.isNaN(hour) || Number.isNaN(minute)) return undefined;
+  const now = new Date();
+  const candidate = new Date(now);
+  candidate.setHours(hour, minute, 0, 0);
+  return candidate.toISOString();
 }
 
 function formatPercentOrPlaceholder(value?: number) {

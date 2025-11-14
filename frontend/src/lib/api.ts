@@ -49,6 +49,7 @@ async function doFetch<T>(url: string, options: FetchOptions = {}): Promise<T> {
 export interface SunsetIndexResponse {
   score: number;
   sunsetTime?: string;
+  sunsetTimeIso?: string;
   metrics?: {
     weather?: string;
     clouds?: number;

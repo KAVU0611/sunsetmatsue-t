@@ -1,13 +1,15 @@
-# Sunset Forecast (Bedrock Edition)
+# Sunset Forecast (Stability Edition)
 
-AWS Bedrock Titan Image Generator v1 で夕景カードを生成し、S3/CloudFront へ自動保存する “本番手前” パイプラインです。React (Vite) フロントエンド → API Gateway → Lambda (Python 3.12) → Bedrock → S3 → CloudFront という経路を CDK(TypeScript) で構築し、Route 53 Hosted Zone 作成と GitHub Actions 自動化まで含めています。
+Stability AI Stable Image (SD3) を既定プロバイダに採用し、嫁ヶ島ビューの夕景カードを生成して S3/CloudFront へ自動保存する “本番手前” パイプラインです。React (Vite) フロントエンド → API Gateway → Lambda (Python 3.12) → Stability AI（必要に応じて AWS Bedrock Titan へフォールバック）→ S3 → CloudFront という経路を CDK(TypeScript) で構築し、Route 53 Hosted Zone 作成と GitHub Actions 自動化まで含めています。
+
+> Bedrock Titan は失敗時のフォールバックとして維持しているため、必要なら `IMG_PROVIDER=titan` で切り替え可能です。
 
 ## リポジトリ構成
 
 | パス | 説明 |
 | --- | --- |
 | `frontend/` | Vite + React + Tailwind + shadcn/ui。日付/場所/天候を入力して生成結果をグリッド表示します。|
-| `services/lambda/generate-card/` | Bedrock Titan v1 を呼び出してカード画像を生成し、Pillow でテキストを重ねて S3 に保存します。|
+| `services/lambda/generate-card/` | Stability AI (SD3) をメインに呼び出し、必要に応じて Bedrock Titan v1 へフォールバックしながらカード画像を生成し、Pillow でテキストを重ねて S3 に保存します。|
 | `layers/pillow/` | Lambda Layer (Pillow) のビルドスクリプト。manylinux wheel を取得して `pillow-layer.zip` を生成します。|
 | `infra/cdk/` | CDK アプリ。S3(画像), CloudFront(OAC), API Gateway, Lambda, Lambda Layer, IAM、Route 53 Hosted Zone の IaC。|
 | `.github/workflows/*.yml` | `deploy.yml` (pnpm + CDK)、`frontend-build.yml` (pnpm + S3 sync) に加えて、OIDC AssumeRole で動く `cdk-deploy.yml` / `frontend-build-deploy.yml` を用意しています。|
@@ -18,14 +20,20 @@ AWS Bedrock Titan Image Generator v1 で夕景カードを生成し、S3/CloudFr
 - Node.js 20 / pnpm 9
 - Python 3.12 (ローカルで layer をビルドする場合)
 - AWS CLI v2 / CDK v2 (`npm i -g aws-cdk`)
-- Bedrock Titan Image Generator v1 へのアクセス権 (us-east-1)
+- Stability AI API キー（SSM パラメータストア等に格納）
+- Bedrock Titan Image Generator v1 へのアクセス権 (us-east-1、フォールバック用)
 - Route 53 で委譲できる独自ドメイン (`MY_DOMAIN_NAME`) ※最終レコード追加は手動
 
 ## 環境変数とシークレット
 
 | 変数 | 用途 |
 | --- | --- |
-| `MODEL_ID` | 既定は `amazon.titan-image-generator-v1`。必要に応じて差し替え。|
+| `IMG_PROVIDER` | 既定は `stability`。`titan` を指定すると Bedrock のみを使用。|
+| `STABILITY_API_KEY_PARAM` | Stability API キーの SSM パラメータ名。既定は `/sunset/STABILITY_API_KEY`。|
+| `STABILITY_ENDPOINT` | Stability API エンドポイント。既定は `https://api.stability.ai/v2beta/stable-image/generate/sd3`。|
+| `STABILITY_MODEL` | Stability 側のモデル名。既定は `sd3`。|
+| `STABILITY_WIDTH` / `STABILITY_HEIGHT` | Stability 生成時の解像度 (64px の倍数)。既定は `1344x768`。|
+| `MODEL_ID` | Titan フォールバック用モデル ID。既定は `amazon.titan-image-generator-v1`。|
 | `BEDROCK_REGION` | Bedrock 呼び出しリージョン。Titan v1 は us-east-1 を推奨。|
 | `FRONTEND_ORIGIN` | CORS 許可オリジン。`matsuesunsetai.com` を使う場合は `https://matsuesunsetai.com` を指定 (Stack 側で `https://www.matsuesunsetai.com` も自動許可)。未指定なら `https://<MY_DOMAIN_NAME>` が既定。|
 | `MY_DOMAIN_NAME` | Route 53 Hosted Zone を作成するドメイン (例: `example.com`)。|
@@ -53,6 +61,8 @@ GitHub Secrets に格納し、必要に応じてワークフローや `pnpm run 
    ```
 4. CDK ブートストラップ & デプロイ
    ```bash
+   export IMG_PROVIDER=stability
+   export STABILITY_API_KEY_PARAM=/sunset/STABILITY_API_KEY
    export MODEL_ID=amazon.titan-image-generator-v1
    export BEDROCK_REGION=us-east-1
    export FRONTEND_ORIGIN=https://matsuesunsetai.com
@@ -61,6 +71,7 @@ GitHub Secrets に格納し、必要に応じてワークフローや `pnpm run 
    make bootstrap   # 初回のみ
    make deploy
    ```
+   Stability API キーは `STABILITY_API_KEY_PARAM` で指定した SSM パラメータ (SecureString) に保存しておきます。
    デプロイ完了後、`CloudFrontDomain`, `ImagesBucketName`, `HostedZoneId` などの出力を控えます。
 
 ## フロントエンド開発
