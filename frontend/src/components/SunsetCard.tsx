@@ -11,7 +11,15 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { apiConfig, generateCard, getSunsetIndex, type GenerateCardResponse } from "../lib/api";
+import {
+  apiConfig,
+  generateCard,
+  getSunsetForecast,
+  getSunsetIndex,
+  type GenerateCardResponse,
+  type SunsetForecastResponse,
+  type SunsetIndexResponse
+} from "../lib/api";
 import { uiSamples } from "../lib/ui-samples";
 import { cn } from "../lib/utils";
 import { Alert } from "./ui/alert";
@@ -25,7 +33,9 @@ type GenerateResponse = {
   sunsetJst?: string;
 };
 
-const FIXED_COORDS = { lat: 35.4690, lon: 133.0505 };
+type Coordinates = { lat: number; lon: number };
+
+const FIXED_COORDS: Coordinates = { lat: 35.4690, lon: 133.0505 };
 const FIXED_LOCATION_LABEL = "嫁ヶ島ビュー（35.4690, 133.0505）";
 const spots = [
   {
@@ -48,19 +58,6 @@ interface Metrics {
   clouds: number;
   humidity: number;
   pm25: number | null;
-}
-
-interface SunsetForecastResponse {
-  location: { lat: number; lon: number };
-  sunset_jst: string;
-  source: string;
-  predicted: {
-    cloudCover_pct?: number;
-    humidity_pct?: number;
-    pm25_ugm3?: number;
-  };
-  hourly_timestamp?: string;
-  cache_ttl_sec?: number;
 }
 
 export default function SunsetCard() {
@@ -123,8 +120,6 @@ export default function SunsetCard() {
     let cancelled = false;
     const load = async () => {
       setLoadingMetrics(true);
-      setLoadingForecast(true);
-      setForecastError(null);
       try {
         const response = await getSunsetIndex(coords);
         if (cancelled) return;
@@ -138,34 +133,27 @@ export default function SunsetCard() {
           humidity: response.metrics?.humidity ?? 0,
           pm25: typeof response.metrics?.pm25 === "number" ? response.metrics?.pm25 : null
         });
-        const predictedMetrics = {
-          cloudCover_pct: response.metrics?.clouds ?? undefined,
-          humidity_pct: response.metrics?.humidity ?? undefined,
-          pm25_ugm3: typeof response.metrics?.pm25 === "number" ? response.metrics?.pm25 : undefined
-        };
-        const isoSunset = response.sunsetTimeIso ?? buildIsoTimestamp(response.sunsetTime);
-        const derivedForecast: SunsetForecastResponse = {
-          location: { lat: coords.lat, lon: coords.lon },
-          sunset_jst: isoSunset ?? response.sunsetTime ?? "",
-          source: "sunset-index",
-          predicted: predictedMetrics,
-          hourly_timestamp: isoSunset ?? new Date().toISOString(),
-          cache_ttl_sec: 300
-        };
-        setForecast(derivedForecast);
-        setSunsetScore(calculateSunsetScore(predictedMetrics));
-        setForecastError(null);
+        const fallbackForecast = buildFallbackForecastFromIndex(response, coords);
+        let appliedFallback = false;
+        setForecast((prev) => {
+          if (prev?.source === "open-meteo") {
+            return prev;
+          }
+          appliedFallback = true;
+          return fallbackForecast;
+        });
+        if (appliedFallback) {
+          setSunsetScore(calculateSunsetScore(fallbackForecast.predicted));
+        }
       } catch (error) {
         console.error(error);
         if (!cancelled) {
           setToast({ message: "現在メンテナンス中 または通信に失敗しました", tone: "error" });
-          setForecastError("予報データを取得できませんでした");
           setSunsetScore(null);
         }
       } finally {
         if (!cancelled) {
           setLoadingMetrics(false);
-          setLoadingForecast(false);
         }
       }
     };
@@ -174,6 +162,38 @@ export default function SunsetCard() {
       cancelled = true;
     };
   }, [coords, apiMissing]);
+
+  useEffect(() => {
+    if (apiMissing) return;
+    let cancelled = false;
+    const fetchForecast = async () => {
+      setLoadingForecast(true);
+      setForecastError(null);
+      try {
+        const response = await getSunsetForecast({
+          date: todaysDate,
+          lat: coords.lat,
+          lon: coords.lon
+        });
+        if (cancelled) return;
+        setForecast(response);
+        setSunsetScore(calculateSunsetScore(response.predicted));
+      } catch (error) {
+        console.error(error);
+        if (!cancelled) {
+          setForecastError("予報データを取得できませんでした");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingForecast(false);
+        }
+      }
+    };
+    fetchForecast();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiMissing, coords]);
 
   const infoRow = useMemo(
     () => [
@@ -588,6 +608,23 @@ function calculateSunsetScore(predicted?: SunsetForecastResponse["predicted"]): 
   const baseline = 15; // wind・視程など取得できない項目の仮加点
 
   return clampScore(cloudTerm + humidityTerm + pmTerm + baseline);
+}
+
+function buildFallbackForecastFromIndex(response: SunsetIndexResponse, coords: Coordinates): SunsetForecastResponse {
+  const predictedMetrics = {
+    cloudCover_pct: response.metrics?.clouds ?? undefined,
+    humidity_pct: response.metrics?.humidity ?? undefined,
+    pm25_ugm3: typeof response.metrics?.pm25 === "number" ? response.metrics?.pm25 : undefined
+  };
+  const isoSunset = response.sunsetTimeIso ?? buildIsoTimestamp(response.sunsetTime);
+  return {
+    location: { lat: coords.lat, lon: coords.lon },
+    sunset_jst: isoSunset ?? response.sunsetTime ?? "",
+    source: "sunset-index",
+    predicted: predictedMetrics,
+    hourly_timestamp: isoSunset ?? new Date().toISOString(),
+    cache_ttl_sec: 300
+  };
 }
 
 function toFiniteNumber(value: number | undefined | null, fallback: number) {

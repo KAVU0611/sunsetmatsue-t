@@ -3,6 +3,7 @@ const RAW_BASE = (import.meta.env.VITE_API_URL ?? "").trim();
 const BASE = (RAW_BASE || DEFAULT_API_BASE).replace(/\/$/, "");
 const METRICS_PATH = import.meta.env.VITE_METRICS_API || "/v1/sunset-index";
 const IMAGE_PATH = import.meta.env.VITE_IMAGE_API || "/v1/generate-card";
+const FORECAST_PATH = import.meta.env.VITE_FORECAST_API || "/forecast/sunset";
 const TIMEOUT_MS = 15_000;
 
 type FetchOptions = RequestInit & { timeoutMs?: number };
@@ -83,6 +84,25 @@ export interface GenerateCardResponse {
   sunsetJst?: string;
 }
 
+export interface SunsetForecastResponse {
+  location: { lat: number; lon: number };
+  sunset_jst: string;
+  source: string;
+  predicted?: {
+    cloudCover_pct?: number;
+    humidity_pct?: number;
+    pm25_ugm3?: number;
+  };
+  hourly_timestamp?: string;
+  cache_ttl_sec?: number;
+}
+
+export interface SunsetForecastParams {
+  date?: string;
+  lat?: number;
+  lon?: number;
+}
+
 export async function getSunsetIndex(params: SunsetIndexParams) {
   requireBaseUrl();
   const qs = new URLSearchParams({
@@ -102,8 +122,28 @@ export async function generateCard(payload: GenerateCardPayload) {
   });
 }
 
+export async function getSunsetForecast(params: SunsetForecastParams = {}) {
+  requireBaseUrl();
+  const query = new URLSearchParams();
+  if (params.date) {
+    query.set("date", params.date);
+  }
+  if (typeof params.lat === "number") {
+    query.set("lat", params.lat.toString());
+  }
+  if (typeof params.lon === "number") {
+    query.set("lon", params.lon.toString());
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  return doFetch<SunsetForecastResponse>(`${BASE}${FORECAST_PATH}${suffix}`, {
+    method: "GET",
+    cache: "no-store"
+  });
+}
+
 export const apiConfig = {
   baseUrl: BASE,
   metricsPath: METRICS_PATH,
-  imagePath: IMAGE_PATH
+  imagePath: IMAGE_PATH,
+  forecastPath: FORECAST_PATH
 };
