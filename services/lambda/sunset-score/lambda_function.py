@@ -122,7 +122,7 @@ def _compute_score(weather: Dict[str, Any], pm25: Any) -> Tuple[float, Dict[str,
     visibility = weather.get("visibility", 10000) or 10000
     pm_value = float(pm25) if isinstance(pm25, (int, float)) else 12.0
 
-    cloud_term = max(0, 35 - abs(45 - clouds) * 0.7)
+    cloud_term, clear_sky_boost = _cloud_score(clouds)
     humidity_term = max(0, 20 - max(0, humidity - 55) * 0.5)
     wind_term = max(0, 20 - max(0, wind - 3) * 6)
     visibility_term = max(0, 15 - max(0, (7000 - visibility) / 400))
@@ -131,7 +131,11 @@ def _compute_score(weather: Dict[str, Any], pm25: Any) -> Tuple[float, Dict[str,
     score = min(100, cloud_term + humidity_term + wind_term + visibility_term + pm_term)
 
     breakdown = {
-        "clouds": {"value": clouds, "weight": round(cloud_term, 1)},
+        "clouds": {
+            "value": clouds,
+            "weight": round(cloud_term, 1),
+            "clearSkyBoost": round(clear_sky_boost, 1),
+        },
         "humidity": {"value": humidity, "weight": round(humidity_term, 1)},
         "wind": {"value": wind, "weight": round(wind_term, 1)},
         "visibility": {"value": visibility, "weight": round(visibility_term, 1)},
@@ -139,6 +143,22 @@ def _compute_score(weather: Dict[str, Any], pm25: Any) -> Tuple[float, Dict[str,
     }
 
     return score, breakdown
+
+
+def _cloud_score(clouds: Any) -> Tuple[float, float]:
+    """Return total cloud term plus the portion gained from the clear-sky boost."""
+    try:
+        cloud_cover = float(clouds)
+    except (TypeError, ValueError):
+        cloud_cover = 50.0
+
+    base = max(0.0, 35.0 - abs(45.0 - cloud_cover) * 0.7)
+    clear_sky_boost = 0.0
+    if cloud_cover <= 25.0:
+        clear_sky_boost = max(0.0, (25.0 - cloud_cover) * 1.0)
+
+    total = min(45.0, base + clear_sky_boost)
+    return total, clear_sky_boost
 
 
 def _response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
